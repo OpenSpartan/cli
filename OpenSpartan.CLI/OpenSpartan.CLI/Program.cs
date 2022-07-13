@@ -1,5 +1,10 @@
 ﻿using Grunt.Authentication;
+using Grunt.Models;
+using Grunt.Util;
+using OpenSpartan.CLI.Core;
+using OpenSpartan.CLI.Models;
 using System.CommandLine;
+using System.Reflection;
 
 namespace OpenSpartan.CLI
 {
@@ -7,14 +12,10 @@ namespace OpenSpartan.CLI
     {
         static XboxAuthenticationManager manager = new();
         static HaloAuthenticationClient haloAuthClient = new();
+        static ConfigurationReader clientConfigReader = new();
         static async Task<int> Main(string[] args)
         {
             var rootCommand = new RootCommand();
-
-            var codeOption = new Option<string>(
-                name: "--code",
-                description: "Initial authorization code to perform the token exchange.",
-                getDefaultValue: () => String.Empty);
 
             var clientIdOption = new Option<string>(
                 name: "--client-id",
@@ -41,81 +42,118 @@ namespace OpenSpartan.CLI
                 description: "Refresh token used to obtain a new token.",
                 getDefaultValue: () => String.Empty);
 
-            var outFolderOption = new Option<string>(
-                name: "--out",
+            var outputOption = new Option<string>(
+                name: "--output",
                 description: "Output location to store the output of the command.",
-                getDefaultValue: () => String.Empty);
+                getDefaultValue: () => String.Empty)
+            {
+                IsRequired = true
+            };
+
+            var outputFormatOption = new Option<OutputFormat>(
+                name: "--output-format",
+                description: "Format for the output data.",
+                getDefaultValue: () => OutputFormat.JSON)
+            {
+                IsRequired = true
+            };
 
             var buildIdOption = new Option<string>(
                 name: "--build-id",
-                description: "Build for which data is being referenced.",
-                getDefaultValue: () => String.Empty);
-
-            var projectIdOption = new Option<string>(
-                name: "--project-id",
-                description: "Unique identifier of the project for which stats need to be obtained.",
-                getDefaultValue: () => String.Empty);
-
-            var secretOption = new Option<string>(
-                name: "--secret",
-                description: "Value for the secret.",
-                getDefaultValue: () => String.Empty);
-
-            var publicKeyOption = new Option<string>(
-                name: "--public-key",
-                description: "Value for the public key used to encrypt the secret.",
-                getDefaultValue: () => String.Empty);
-
-            var startCommand = new Command("start", "Authenticate the user with the Xbox and Halo services.")
+                description: "Build for which data is being referenced.")
             {
-                codeOption,
+                IsRequired = true
+            };
+
+            var spartanTokenOption = new Option<string>(
+                name: "--spartan-token",
+                description: "Existing Spartan token. Using this option means you're not using the built-in authentication.",
+                getDefaultValue: () => String.Empty)
+            {
+                IsRequired = false
+            };
+
+            var authCommand = new Command("auth", "Authenticate the user with Xbox Live and Halo services.")
+            {
                 clientIdOption,
                 clientSecretOption,
                 redirectUrlOption
             };
 
-            var getUrlCommand = new Command("geturl", "Get the authentication URL which the user should go to for auth code production.")
+            var authUrlCommand = new Command("authurl", "Get the authentication URL that is required to complete the authentication process.")
             {
                 clientIdOption,
                 redirectUrlOption
             };
 
-            var refreshCommand = new Command("refresh", "Refreshes the currently assigned token to a new one.")
+            var refreshCommand = new Command("authrefresh", "Refreshes the currently assigned token to a new one.");
+
+            var getManifestCommand = new Command("get-manifest", "Gets the game manifest for the specified build.")
             {
-                clientIdOption,
-                clientSecretOption,
-                redirectUrlOption,
-                refreshTokenOption
+                buildIdOption,
+                spartanTokenOption,
+                outputFormatOption,
+                outputOption
             };
 
-            rootCommand.AddCommand(startCommand);
-            rootCommand.AddCommand(getUrlCommand);
+            rootCommand.AddCommand(authCommand);
+            rootCommand.AddCommand(authUrlCommand);
             rootCommand.AddCommand(refreshCommand);
+            rootCommand.AddCommand(getManifestCommand);
 
-            startCommand.SetHandler(async (code, clientId, clientSecret, redirectUrl) =>
+            authCommand.SetHandler((clientId, clientSecret, redirectUrl) =>
             {
-                var authResultString = await Core.AuthHelper.PerformAuthentication(manager, code, clientId, clientSecret, redirectUrl);
-                if (!string.IsNullOrEmpty(authResultString))
+                var success = AuthHelper.RequestNewToken(manager, redirectUrl, clientId, clientSecret, AuthHelper.GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                if (success)
                 {
-                    Console.WriteLine(authResultString);
+                    Console.WriteLine("Authentication process got a token.");
                 }
-            }, codeOption, clientIdOption, clientSecretOption, redirectUrlOption);
+                else
+                {
+                    Console.WriteLine("Authentication process could not get a token.");
+                }
+            }, clientIdOption, clientSecretOption, redirectUrlOption);
 
-            getUrlCommand.SetHandler((clientId, redirectUrl) =>
+            authUrlCommand.SetHandler((clientId, redirectUrl) =>
             {
                 var url = manager.GenerateAuthUrl(clientId, redirectUrl);
                 Console.WriteLine("You should be requesting the code from the following URL, if you don't have it yet:");
                 Console.WriteLine(url);
             }, clientIdOption, redirectUrlOption);
 
-            refreshCommand.SetHandler(async (clientId, clientSecret, redirectUrl, refreshToken) =>
+            refreshCommand.SetHandler(async () =>
             {
-                var authResultString = await Core.AuthHelper.PerformTokenRefresh(manager, refreshToken, clientId, clientSecret, redirectUrl);
-                if (!string.IsNullOrEmpty(authResultString))
+                if (AuthHelper.AuthTokensExist())
                 {
-                    Console.WriteLine(authResultString);
+                    var currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>(AuthHelper.GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                    var currentClientConfig = clientConfigReader.ReadConfiguration<ClientConfiguration>(AuthHelper.GetConfigurationFilePath(ConfigurationFileType.Client));
+
+                    var success = await AuthHelper.RefreshToken(manager, currentOAuthToken.RefreshToken, currentClientConfig.RedirectUrl, currentClientConfig.ClientId, currentClientConfig.ClientSecret, AuthHelper.GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                    if (success)
+                    {
+                        Console.WriteLine("Authentication process refreshed a token.");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Authentication process could not refresh a token.");
+                    }
                 }
-            }, clientIdOption, clientSecretOption, redirectUrlOption, refreshTokenOption);
+                else
+                {
+                    Console.WriteLine("Local tokens do not exist, therefore there is nothing to refresh.");
+                }
+            });
+
+            //if (System.IO.File.Exists("tokens.json"))
+            //{
+            //    Console.WriteLine("Trying to use local tokens...");
+            //    // If a local token file exists, load the file.
+            //    currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>("tokens.json");
+            //}
+            //else
+            //{
+            //    currentOAuthToken = RequestNewToken(url, manager, clientConfig);
+            //}
 
             return await rootCommand.InvokeAsync(args);
         }
