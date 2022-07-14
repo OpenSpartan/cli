@@ -1,16 +1,18 @@
 ﻿using Grunt.Authentication;
+using Grunt.Core;
 using Grunt.Models;
+using Grunt.Models.HaloInfinite;
 using Grunt.Util;
 using OpenSpartan.CLI.Core;
 using OpenSpartan.CLI.Models;
 using System.CommandLine;
 using System.Reflection;
+using System.Text.Json;
 
 namespace OpenSpartan.CLI
 {
     internal class Program
     {
-        static ConfigurationReader clientConfigReader = new();
         static async Task<int> Main(string[] args)
         {
             var rootCommand = new RootCommand();
@@ -67,6 +69,14 @@ namespace OpenSpartan.CLI
                 IsRequired = false
             };
 
+            var clearanceOption = new Option<string>(
+                name: "--clearance",
+                description: "Clearance (flight) GUID.",
+                getDefaultValue: () => String.Empty)
+            {
+                IsRequired = false
+            };
+
             var setAuthCommand = new Command("set-auth", "Authenticate the user with Xbox Live and Halo services.")
             {
                 clientIdOption,
@@ -86,6 +96,7 @@ namespace OpenSpartan.CLI
             {
                 buildIdOption,
                 spartanTokenOption,
+                clearanceOption,
                 outputFormatOption,
                 outputOption
             };
@@ -118,10 +129,7 @@ namespace OpenSpartan.CLI
             {
                 if (AuthHelper.AuthTokensExist())
                 {
-                    var currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>(AuthHelper.GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
-                    var currentClientConfig = clientConfigReader.ReadConfiguration<ClientConfiguration>(AuthHelper.GetConfigurationFilePath(ConfigurationFileType.Client));
-
-                    var success = await AuthHelper.RefreshToken(currentOAuthToken.RefreshToken, currentClientConfig.RedirectUrl, currentClientConfig.ClientId, currentClientConfig.ClientSecret, AuthHelper.GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                    var success = await AuthHelper.RefreshToken();
                     if (success)
                     {
                         Console.WriteLine("Authentication process refreshed a token.");
@@ -137,16 +145,52 @@ namespace OpenSpartan.CLI
                 }
             });
 
-            //if (System.IO.File.Exists("tokens.json"))
-            //{
-            //    Console.WriteLine("Trying to use local tokens...");
-            //    // If a local token file exists, load the file.
-            //    currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>("tokens.json");
-            //}
-            //else
-            //{
-            //    currentOAuthToken = RequestNewToken(url, manager, clientConfig);
-            //}
+            getManifestCommand.SetHandler((buildId, spartanToken, outputFormat, output) =>
+            {
+                Manifest gameManifest;
+                HaloInfiniteClient client = null;
+
+                if (!string.IsNullOrEmpty(spartanToken))
+                {
+                    // User decided to use the Spartan token instead of the native auth.
+                    client = new(spartanToken, string.Empty);
+                }
+                else
+                {
+                    // User is trying to use native auth.
+                    if (AuthHelper.AuthTokensExist())
+                    {
+                        var haloTokens = AuthHelper.GetHaloTokens();
+                        client = new HaloInfiniteClient(haloTokens.SpartanToken, haloTokens.Xuid);
+                    }
+                    else
+                    {
+                        Console.WriteLine("No authentication tokens stored locally. Make sure that you run `openspartan set-auth` with your client credentials to set local tokens. Alternatively, you can re-run this command by passing your Spartan token directly.");
+                        Environment.Exit(0);
+                    }
+                }
+
+                var manifest = client.HIUGCDiscoveryGetManifestByBuild(buildId);
+                if (manifest != null)
+                {
+                    var outputData = string.Empty;
+                    if (outputFormat == OutputFormat.JSON)
+                    {
+                        outputData = JsonSerializer.Serialize(manifest);
+                    }
+
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        System.IO.File.WriteAllText(output, outputData);
+                    }
+
+                    Console.WriteLine(outputData);
+                }
+                else
+                {
+                    Console.WriteLine($"Could not successfully obtain a game manifest for build {buildId}");
+                }
+            }, buildIdOption, spartanTokenOption, outputFormatOption, outputOption);
 
             return await rootCommand.InvokeAsync(args);
         }

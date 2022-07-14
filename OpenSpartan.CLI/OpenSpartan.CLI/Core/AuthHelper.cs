@@ -1,5 +1,6 @@
 ﻿using Grunt.Authentication;
 using Grunt.Models;
+using Grunt.Util;
 using OpenSpartan.CLI.Models;
 using System.Reflection;
 using System.Text.Encodings.Web;
@@ -11,10 +12,111 @@ namespace OpenSpartan.CLI.Core
     {
         static XboxAuthenticationManager authManager = new();
         static HaloAuthenticationClient haloAuthClient = new();
-        internal static async Task<bool> RefreshToken(string refreshToken, string redirectUrl, string clientId, string clientSecret, string location)
+        static ConfigurationReader clientConfigReader = new();
+
+        internal static async Task<bool> RefreshToken()
         {
-            OAuthToken currentOAuthToken = await authManager.RefreshOAuthToken(clientId, refreshToken, redirectUrl, clientSecret);
-            return ProcessOAuthToken(currentOAuthToken, redirectUrl, clientId, clientSecret, location);
+            var currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>(GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+            var currentClientConfig = clientConfigReader.ReadConfiguration<ClientConfiguration>(GetConfigurationFilePath(ConfigurationFileType.Client));
+
+            if (currentOAuthToken != null && currentClientConfig != null)
+            {
+                currentOAuthToken = await authManager.RefreshOAuthToken(currentClientConfig.ClientId, currentOAuthToken.RefreshToken, currentClientConfig.RedirectUrl, currentClientConfig.ClientSecret);
+                return ProcessOAuthToken(currentOAuthToken, currentClientConfig.RedirectUrl, currentClientConfig.ClientId, currentClientConfig.ClientSecret, GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+            }
+            else
+            {
+                Console.WriteLine("Could not read the auth tokens or the client configuration when trying to refresh tokens.");
+            }
+
+            return false;
+        }
+
+        internal static HaloTokens? GetHaloTokens()
+        {
+            XboxTicket? ticket = new XboxTicket();
+            XboxTicket? haloTicket = new XboxTicket();
+            XboxTicket? extendedTicket = new XboxTicket();
+            HaloTokens? haloTokens = null;
+            var spartanToken = new SpartanToken();
+
+            var currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>(GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+            var currentClientConfig = clientConfigReader.ReadConfiguration<ClientConfiguration>(GetConfigurationFilePath(ConfigurationFileType.Client));
+
+            var isOAuthSuccessful = false;
+
+            Task.Run(async () =>
+            {
+                ticket = await authManager.RequestUserToken(currentOAuthToken.AccessToken);
+                if (ticket == null)
+                {
+                    // There was a failure to obtain the user token, so likely we need to refresh.
+                    currentOAuthToken = await authManager.RefreshOAuthToken(currentClientConfig.ClientId, currentOAuthToken.RefreshToken, currentClientConfig.RedirectUrl, currentClientConfig.ClientSecret);
+                    if (currentOAuthToken == null)
+                    {
+                        Console.WriteLine("Could not get the token even with the refresh token. Let's try getting a new one.");
+                        var success = RequestNewToken(currentClientConfig.RedirectUrl, currentClientConfig.ClientId, currentClientConfig.ClientSecret, GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                        if (success)
+                        {
+                            currentOAuthToken = clientConfigReader.ReadConfiguration<OAuthToken>(GetConfigurationFilePath(ConfigurationFileType.AuthTokens));
+                            if (currentOAuthToken != null && !string.IsNullOrEmpty(currentOAuthToken.AccessToken))
+                            {
+                                isOAuthSuccessful = true;
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("Could not request a new token. You might need to try running `openspartan set-auth` to authenticate.");
+                        }
+                    }
+
+                    if (currentOAuthToken != null && isOAuthSuccessful)
+                    {
+                        ticket = await authManager.RequestUserToken(currentOAuthToken.AccessToken);
+                    }
+                }
+            }).GetAwaiter().GetResult();
+
+            if (ticket != null && !string.IsNullOrEmpty(ticket.Token))
+            {
+                Task.Run(async () =>
+                {
+                    haloTicket = await authManager.RequestXstsToken(ticket.Token);
+                }).GetAwaiter().GetResult();
+
+                if (haloTicket != null && haloTicket.Token != null)
+                {
+                    Task.Run(async () =>
+                    {
+                        extendedTicket = await authManager.RequestXstsToken(ticket.Token, false);
+                    }).GetAwaiter().GetResult();
+
+                    Task.Run(async () =>
+                    {
+                        spartanToken = await haloAuthClient.GetSpartanToken(haloTicket.Token);
+                        if (spartanToken != null && !string.IsNullOrEmpty(spartanToken.Token))
+                        {
+                            haloTokens = new HaloTokens();
+                            haloTokens.SpartanToken = spartanToken.Token;
+                            haloTokens.Xuid = extendedTicket.DisplayClaims.Xui[0].Xid;
+                        }
+                        else
+                        {
+                            Console.WriteLine("Could not obtain a Halo API token.");
+                        }
+                    }).GetAwaiter().GetResult();
+                }
+                else
+                {
+                    Console.WriteLine("Could not obtain a Halo API ticket.");
+                }
+            }
+            else
+            {
+                Console.WriteLine("Could not obtain an Xbox Live ticket.");
+            }
+
+            return haloTokens;
         }
 
         internal static bool RequestNewToken(string redirectUrl, string clientId, string clientSecret, string location)
