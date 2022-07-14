@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "OpenSpartan.CLI": {
+      "commandName": "Project",
+      "commandLineArgs": "refresh-auth"
+    }
+  }
+}

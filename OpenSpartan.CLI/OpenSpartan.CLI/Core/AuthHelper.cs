@@ -9,13 +9,15 @@ namespace OpenSpartan.CLI.Core
 {
     internal class AuthHelper
     {
-        internal static async Task<bool> RefreshToken(XboxAuthenticationManager authManager, string refreshToken, string redirectUrl, string clientId, string clientSecret, string location)
+        static XboxAuthenticationManager authManager = new();
+        static HaloAuthenticationClient haloAuthClient = new();
+        internal static async Task<bool> RefreshToken(string refreshToken, string redirectUrl, string clientId, string clientSecret, string location)
         {
             OAuthToken currentOAuthToken = await authManager.RefreshOAuthToken(clientId, refreshToken, redirectUrl, clientSecret);
             return ProcessOAuthToken(currentOAuthToken, redirectUrl, clientId, clientSecret, location);
         }
 
-        internal static bool RequestNewToken(XboxAuthenticationManager authManager, string redirectUrl, string clientId, string clientSecret, string location)
+        internal static bool RequestNewToken(string redirectUrl, string clientId, string clientSecret, string location)
         {
             Console.WriteLine("Enter your authorization code:");
             var code = Console.ReadLine();
@@ -30,18 +32,23 @@ namespace OpenSpartan.CLI.Core
             return success;
         }
 
+        internal static string GetAuthUrl(string clientId, string redirectUrl)
+        {
+            return authManager.GenerateAuthUrl(clientId, redirectUrl);
+        }
+
         private static bool ProcessOAuthToken(OAuthToken currentOAuthToken, string redirectUrl, string clientId, string clientSecret, string location)
         {
             if (currentOAuthToken != null)
             {
-                var storeTokenResult = StoreData(currentOAuthToken, location);
+                var storeTokenResult = StoreData(currentOAuthToken, location, OutputFormat.JSON, true);
 
                 var clientConfiguration = new ClientConfiguration { ClientId = clientId, ClientSecret = clientSecret, RedirectUrl = redirectUrl };
 
                 if (storeTokenResult)
                 {
                     Console.WriteLine("Stored the tokens locally.");
-                    var storeClientConfigurationResult = StoreData(clientConfiguration, GetConfigurationFilePath(ConfigurationFileType.Client));
+                    var storeClientConfigurationResult = StoreData(clientConfiguration, GetConfigurationFilePath(ConfigurationFileType.Client), OutputFormat.JSON, true);
                     if (storeClientConfigurationResult)
                     {
                         Console.WriteLine("Stored client configuration locally.");
@@ -98,13 +105,30 @@ namespace OpenSpartan.CLI.Core
                 return false;
             }
         }
-        private static bool StoreData<T>(T data, string path)
+        private static bool StoreData<T>(T data, string path, OutputFormat format = OutputFormat.JSON, bool useGruntNamingPolicy = false)
         {
-            var options = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-            string json = JsonSerializer.Serialize(data, options);
+            string output = string.Empty;
+
+            if (format == OutputFormat.JSON)
+            {
+                var options = new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    // TODO: This is stop gap until Grunt moves to using the native JSON serializer.
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                };
+
+                if (useGruntNamingPolicy)
+                {
+                    options.PropertyNamingPolicy = new GruntJsonNamingPolicy();
+                }
+
+                output = JsonSerializer.Serialize(data, options);
+            }
+
             try
             {
-                File.WriteAllText(path, json);
+                File.WriteAllText(path, output);
                 return true;
             }
             catch (Exception ex)
