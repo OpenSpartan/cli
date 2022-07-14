@@ -7,6 +7,8 @@ using OpenSpartan.CLI.Core;
 using OpenSpartan.CLI.Models;
 using System.CommandLine;
 using System.Reflection;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace OpenSpartan.CLI
@@ -145,7 +147,7 @@ namespace OpenSpartan.CLI
                 }
             });
 
-            getManifestCommand.SetHandler((buildId, spartanToken, outputFormat, output) =>
+            getManifestCommand.SetHandler(async (buildId, spartanToken, outputFormat, output) =>
             {
                 Manifest gameManifest;
                 HaloInfiniteClient client = null;
@@ -161,7 +163,15 @@ namespace OpenSpartan.CLI
                     if (AuthHelper.AuthTokensExist())
                     {
                         var haloTokens = AuthHelper.GetHaloTokens();
-                        client = new HaloInfiniteClient(haloTokens.SpartanToken, haloTokens.Xuid);
+                        if (haloTokens != null && !string.IsNullOrEmpty(haloTokens.SpartanToken))
+                        {
+                            client = new HaloInfiniteClient(haloTokens.SpartanToken, haloTokens.Xuid);
+                        }
+                        else
+                        {
+                            Console.WriteLine("You don't have any Halo tokens ready. Make sure that your credentials are correct.");
+                            Environment.Exit(0);
+                        }
                     }
                     else
                     {
@@ -170,13 +180,29 @@ namespace OpenSpartan.CLI
                     }
                 }
 
-                var manifest = client.HIUGCDiscoveryGetManifestByBuild(buildId);
+                var manifest = await client.HIUGCDiscoveryGetManifestByBuild(buildId);
                 if (manifest != null)
                 {
                     var outputData = string.Empty;
                     if (outputFormat == OutputFormat.JSON)
                     {
-                        outputData = JsonSerializer.Serialize(manifest);
+                        var options = new JsonSerializerOptions
+                        {
+                            WriteIndented = true,
+                            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                        };
+                        outputData = JsonSerializer.Serialize(manifest, options);
+                    }
+                    else if (outputFormat == OutputFormat.Markdown)
+                    {
+                        StringBuilder compositeTables = new StringBuilder();
+                        compositeTables.Append(manifest.EngineGameVariantLinks.ToMarkdownTable());
+                        compositeTables.AppendLine();
+                        compositeTables.Append(manifest.MapLinks.ToMarkdownTable());
+                        compositeTables.AppendLine();
+                        compositeTables.Append(manifest.UgcGameVariantLinks.ToMarkdownTable());
+
+                        outputData = compositeTables.ToString();
                     }
 
                     if (!string.IsNullOrEmpty(output))

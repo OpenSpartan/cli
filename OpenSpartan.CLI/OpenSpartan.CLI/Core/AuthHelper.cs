@@ -216,10 +216,10 @@ namespace OpenSpartan.CLI.Core
                 var options = new JsonSerializerOptions
                 {
                     WriteIndented = true,
-                    // TODO: This is stop gap until Grunt moves to using the native JSON serializer.
                     Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 };
 
+                // TODO: This is stop gap until Grunt moves to using the native JSON serializer.
                 if (useGruntNamingPolicy)
                 {
                     options.PropertyNamingPolicy = new GruntJsonNamingPolicy();
