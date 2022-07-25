@@ -1,6 +1,6 @@
-﻿using Grunt.Authentication;
-using Grunt.Models;
-using Grunt.Util;
+﻿using OpenSpartan.Grunt.Authentication;
+using OpenSpartan.Grunt.Models;
+using OpenSpartan.Grunt.Util;
 using OpenSpartan.CLI.Models;
 using System.Reflection;
 using System.Text.Encodings.Web;
@@ -10,7 +10,7 @@ namespace OpenSpartan.CLI.Core
 {
     internal class AuthHelper
     {
-        static XboxAuthenticationManager authManager = new();
+        static XboxAuthenticationClient authManager = new();
         static HaloAuthenticationClient haloAuthClient = new();
         static ConfigurationReader clientConfigReader = new();
 

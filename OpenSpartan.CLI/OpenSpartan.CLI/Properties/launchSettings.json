@@ -2,7 +2,7 @@
   "profiles": {
     "OpenSpartan.CLI": {
       "commandName": "Project",
-      "commandLineArgs": "refresh-auth"
+      "commandLineArgs": "get-manifest --build-id "
     }
   }
 }

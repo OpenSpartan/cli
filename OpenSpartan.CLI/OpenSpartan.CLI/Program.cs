@@ -1,10 +1,7 @@
-﻿using Grunt.Authentication;
-using Grunt.Core;
-using Grunt.Models;
-using Grunt.Models.HaloInfinite;
-using Grunt.Util;
-using OpenSpartan.CLI.Core;
+﻿using OpenSpartan.CLI.Core;
 using OpenSpartan.CLI.Models;
+using OpenSpartan.Grunt.Core;
+using OpenSpartan.Grunt.Models.HaloInfinite;
 using System.CommandLine;
 using System.Reflection;
 using System.Text;
@@ -180,7 +177,7 @@ namespace OpenSpartan.CLI
                     }
                 }
 
-                var manifest = await client.HIUGCDiscoveryGetManifestByBuild(buildId);
+                var manifest = (await client.HIUGCDiscoveryGetManifestByBuild(buildId)).Result;
                 if (manifest != null)
                 {
                     var outputData = string.Empty;
